@@ -149,7 +149,6 @@ class HyundaiFlags(IntFlag):
 
   ALT_LIMITS_2 = 2 ** 26
 
-
 @dataclass
 class HyundaiCarDocs(CarDocs):
   package: str = "Smart Cruise Control (SCC)"
@@ -572,6 +571,13 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=2087, wheelbase=3.09, steerRatio=14.23),
     flags=HyundaiFlags.CANFD_RADAR_SCC,
+  )
+  KIA_CARNIVAL_2025 = HyundaiCanFDPlatformConfig(
+    [
+      HyundaiCarDocs("Kia Carnival (with HDA II) 2025-26", "Highway Driving Assist II",
+                     car_parts=CarParts.common([CarHarness.hyundai_q])),
+    ],
+    KIA_CARNIVAL_4TH_GEN.specs,
   )
 
   # Genesis

@@ -57,6 +57,9 @@ class CarInterface(CarInterfaceBase):
         ret.flags |= HyundaiFlags.CANFD_LKA_STEER_MSG.value
         if 0x110 in fingerprint[CAN.CAM]:
           ret.flags |= HyundaiFlags.CANFD_LKA_STEER_MSG_ALT.value
+        # This HDA II Carnival receives cruise buttons on 0x1AA instead of 0x1CF.
+        if candidate == CAR.KIA_CARNIVAL_2025 and 0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]:
+          ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
       else:
         # no LKA steering
         if 0x1cf not in fingerprint[CAN.ECAN]:

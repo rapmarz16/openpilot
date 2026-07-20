@@ -63,6 +63,35 @@ class TestHyundaiFingerprint(unittest.TestCase):
       CP = CarInterface.get_params(CAR.HYUNDAI_SONATA, fingerprint, [], False, False, False)
       assert CP.radarUnavailable != radar
 
+  def test_carnival_2025_ice_route(self):
+    camera_fw = b'\xf1\x00KA4 MFC  AT CAN LHD 1.00 1.00 99210-R0700 250324'
+    radar_fw = b'\xf1\x00KA4_ RDR -----      1.00 1.01 99110-R0510         '
+    matching_platforms = {
+      platform for platform, fw_by_ecu in FW_VERSIONS.items()
+      if camera_fw in fw_by_ecu.get((Ecu.fwdCamera, 0x7c4, None), [])
+      and radar_fw in fw_by_ecu.get((Ecu.fwdRadar, 0x7d0, None), [])
+    }
+    assert matching_platforms == {CAR.KIA_CARNIVAL_2025}
+
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[CanBus(None, fingerprint).CAM] = {0x110: 32}
+    CAN = CanBus(None, fingerprint, lka_steering=True)
+    fingerprint[CAN.ECAN] = {0x40: 32, 0x1a0: 32, 0x1aa: 16, 0x1ba: 24}
+
+    CP = CarInterface.get_params(CAR.KIA_CARNIVAL_2025, fingerprint, [], False, False, False)
+    assert CP.mass == 2223
+    assert CP.enableBsm
+    assert CP.radarUnavailable
+    assert CP.pcmCruise and not CP.openpilotLongitudinalControl
+    assert CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG
+    assert CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT
+    assert CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS
+    assert CP.flags & HyundaiFlags.CANFD_ALT_GEARS
+    assert not (CP.flags & HyundaiFlags.HYBRID)
+    assert CP.safetyConfigs[-1].safetyParam == (HyundaiSafetyFlags.CANFD_LKA_STEER_MSG |
+                                                HyundaiSafetyFlags.CANFD_LKA_STEER_MSG_ALT |
+                                                HyundaiSafetyFlags.CANFD_ALT_BUTTONS)
+
   def test_alternate_limits(self):
     # Alternate lateral control limits, for high torque cars, verify Panda safety mode flag is set
     fingerprint = gen_empty_fingerprint()
