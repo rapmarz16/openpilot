@@ -45,6 +45,9 @@ class CarInterface(CarInterfaceBase):
       if lka_steering and Ecu.adas not in [fw.ecu for fw in car_fw]:
         # this needs to be figured out for cars without an ADAS ECU
         ret.alphaLongitudinalAvailable = False
+      if candidate == CAR.KIA_CARNIVAL_2025:
+        # Keep the factory FCA/AEB stack active until longitudinal control is validated on this platform.
+        ret.alphaLongitudinalAvailable = False
 
       ret.enableBsm = 0x1ba in fingerprint[CAN.ECAN]
 

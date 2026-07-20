@@ -78,10 +78,12 @@ class TestHyundaiFingerprint(unittest.TestCase):
     CAN = CanBus(None, fingerprint, lka_steering=True)
     fingerprint[CAN.ECAN] = {0x40: 32, 0x1a0: 32, 0x1aa: 16, 0x1ba: 24}
 
-    CP = CarInterface.get_params(CAR.KIA_CARNIVAL_2025, fingerprint, [], False, False, False)
+    car_fw = [CarParams.CarFw(ecu=Ecu.adas)]
+    CP = CarInterface.get_params(CAR.KIA_CARNIVAL_2025, fingerprint, car_fw, True, False, False)
     assert CP.mass == 2223
     assert CP.enableBsm
     assert CP.radarUnavailable
+    assert not CP.alphaLongitudinalAvailable
     assert CP.pcmCruise and not CP.openpilotLongitudinalControl
     assert CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG
     assert CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT
