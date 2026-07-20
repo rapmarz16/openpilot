@@ -257,8 +257,9 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     ret.steerFaultTemporary = cp.vl["MDPS"]["MDPS_LkaFailSta"] != 0
 
     # TODO: alt signal usage may be described by cp.vl['BLINKERS']['USE_ALT_LAMP']
+    # CCNC cars (2025+ Carnival, etc.) and Kona EV 2nd gen use ALT blinker signals
     left_blinker_sig, right_blinker_sig = "LEFT_LAMP", "RIGHT_LAMP"
-    if self.CP.carFingerprint == CAR.HYUNDAI_KONA_EV_2ND_GEN:
+    if self.CP.carFingerprint == CAR.HYUNDAI_KONA_EV_2ND_GEN or self.CP.flags & HyundaiFlags.CCNC:
       left_blinker_sig, right_blinker_sig = "LEFT_LAMP_ALT", "RIGHT_LAMP_ALT"
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_lamp(50, cp.vl["BLINKERS"][left_blinker_sig],
                                                                       cp.vl["BLINKERS"][right_blinker_sig])
@@ -323,6 +324,8 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
         ("CRUISE_BUTTONS", 1)
       ]
+    if CP.enableBsm:
+      msgs += [("ADAS_CMD_50_50ms", 50)]
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus(CP).CAM),

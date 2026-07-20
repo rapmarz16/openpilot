@@ -317,13 +317,22 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     if (hyundai_canfd_lka_steer_msg) {
       // *** LKA steering checks ***
       // E-CAN is on bus 1, SCC messages are sent on cars with ADRV ECU.
-      // Does not use the alt buttons message
+      // Some LKA cars (e.g. Carnival 2025+) use alt buttons (0x1AA instead of 0x1CF)
       static RxCheck hyundai_canfd_lka_steer_msg_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(1)
       };
 
-      SET_RX_CHECKS(hyundai_canfd_lka_steer_msg_rx_checks, ret);
+      static RxCheck hyundai_canfd_lka_steer_msg_alt_buttons_rx_checks[] = {
+        HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(1)
+        HYUNDAI_CANFD_SCC_ADDR_CHECK(1)
+      };
+
+      if (hyundai_canfd_alt_buttons) {
+        SET_RX_CHECKS(hyundai_canfd_lka_steer_msg_alt_buttons_rx_checks, ret);
+      } else {
+        SET_RX_CHECKS(hyundai_canfd_lka_steer_msg_rx_checks, ret);
+      }
       if (hyundai_canfd_lka_steer_msg_alt) {
         SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_ALT_TX_MSGS, ret);
       } else {
