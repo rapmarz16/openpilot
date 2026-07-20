@@ -1,0 +1,251 @@
+name: Sync Sunnypilot release-mici
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sync-sunnypilot-release-mici
+  cancel-in-progress: false
+
+env:
+  TARGET_BRANCH: kia-carnival-2026-ice-stock
+
+jobs:
+  sync:
+    name: Rebase and validate the Carnival port
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      updated: ${{ steps.detect.outputs.updated }}
+      old_tip: ${{ steps.detect.outputs.old_tip }}
+      recorded_base: ${{ steps.detect.outputs.recorded_base }}
+      upstream_tip: ${{ steps.detect.outputs.upstream_tip }}
+      new_tip: ${{ steps.push.outputs.new_tip }}
+      backup_tag: ${{ steps.push.outputs.backup_tag }}
+
+    steps:
+      - name: Check out the installer branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: kia-carnival-2026-ice-stock
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect a new release-mici snapshot
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --force origin "+refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          git remote add sunnypilot https://github.com/sunnypilot/sunnypilot.git
+          git fetch --no-tags --force sunnypilot "+refs/heads/release-mici:refs/remotes/sunnypilot/release-mici"
+
+          old_tip="$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")"
+          recorded_base="$(tr -d '[:space:]' < .github/upstream-release-mici-base)"
+          upstream_tip="$(git rev-parse refs/remotes/sunnypilot/release-mici)"
+
+          if [[ ! "${recorded_base}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid commit in .github/upstream-release-mici-base: ${recorded_base}" >&2
+            exit 1
+          fi
+
+          git cat-file -e "${recorded_base}^{commit}"
+          if ! git merge-base --is-ancestor "${recorded_base}" "${old_tip}"; then
+            echo "Recorded upstream base is not an ancestor of the installer branch." >&2
+            exit 1
+          fi
+
+          {
+            echo "updated=false"
+            echo "old_tip=${old_tip}"
+            echo "recorded_base=${recorded_base}"
+            echo "upstream_tip=${upstream_tip}"
+          } >> "${GITHUB_OUTPUT}"
+
+          if [[ "${recorded_base}" == "${upstream_tip}" ]]; then
+            echo "release-mici is unchanged at ${upstream_tip}." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          echo "updated=true" >> "${GITHUB_OUTPUT}"
+          echo "A new release-mici snapshot was found: ${upstream_tip}." | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: Replay the reviewed fork commits
+        id: replay
+        if: steps.detect.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --detach "${{ steps.detect.outputs.old_tip }}"
+          git rebase --onto "${{ steps.detect.outputs.upstream_tip }}" \
+            "${{ steps.detect.outputs.recorded_base }}" HEAD
+
+          printf '%s\n' "${{ steps.detect.outputs.upstream_tip }}" > .github/upstream-release-mici-base
+          git add .github/upstream-release-mici-base
+          git commit -m "Update Sunnypilot release-mici base"
+          git diff --check "${{ steps.detect.outputs.upstream_tip }}..HEAD"
+
+          echo "rebased_tip=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Python
+        if: steps.detect.outputs.updated == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install focused test dependencies
+        if: steps.detect.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            -e ./opendbc_repo pytest pytest-subtests pytest-cpp cffi "hypothesis==6.47.*"
+
+      - name: Test Hyundai vehicle parameters
+        if: steps.detect.outputs.updated == 'true'
+        working-directory: opendbc_repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -o addopts='' --confcutdir=. \
+            opendbc/car/hyundai/tests/test_hyundai.py -q
+
+      - name: Test compiled Hyundai CAN-FD Panda safety
+        if: steps.detect.outputs.updated == 'true'
+        working-directory: opendbc_repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -o addopts='' --confcutdir=. \
+            opendbc/safety/tests/test_hyundai_canfd.py -q
+
+      - name: Back up and update the installer branch
+        id: push
+        if: steps.detect.outputs.updated == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          old_tip="${{ steps.detect.outputs.old_tip }}"
+          backup_tag="kia-carnival-sync-backup-$(date -u +%Y%m%d)-${old_tip:0:8}-${GITHUB_RUN_ID}"
+
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git tag -a "${backup_tag}" "${old_tip}" -m "Installer branch before release-mici sync ${GITHUB_RUN_ID}"
+          git push origin "refs/tags/${backup_tag}:refs/tags/${backup_tag}"
+          git push --force-with-lease="refs/heads/${TARGET_BRANCH}:${old_tip}" \
+            origin "HEAD:refs/heads/${TARGET_BRANCH}"
+
+          new_tip="$(git rev-parse HEAD)"
+          {
+            echo "new_tip=${new_tip}"
+            echo "backup_tag=${backup_tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "### Sunnypilot sync succeeded"
+            echo
+            echo "- Previous installer tip: \`${old_tip}\`"
+            echo "- New upstream base: \`${{ steps.detect.outputs.upstream_tip }}\`"
+            echo "- New installer tip: \`${new_tip}\`"
+            echo "- Recovery tag: \`${backup_tag}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  notify:
+    name: Report update status
+    needs: sync
+    if: ${{ always() && (needs.sync.result != 'success' || needs.sync.outputs.updated == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+
+    steps:
+      - name: Comment on the persistent sync-status issue
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        env:
+          SYNC_RESULT: ${{ needs.sync.result }}
+          OLD_TIP: ${{ needs.sync.outputs.old_tip }}
+          UPSTREAM_TIP: ${{ needs.sync.outputs.upstream_tip }}
+          NEW_TIP: ${{ needs.sync.outputs.new_tip }}
+          BACKUP_TAG: ${{ needs.sync.outputs.backup_tag }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const title = "Sunnypilot release-mici sync status";
+            const runUrl = `https://github.com/${process.env.REPOSITORY}/actions/runs/${process.env.RUN_ID}`;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "all",
+              per_page: 100,
+            });
+            let issue = issues.find(item => !item.pull_request && item.title === title);
+
+            if (!issue) {
+              const created = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body: "@rapmarz16 This issue receives success and failure alerts from the automated `release-mici` updater. Keep it open and subscribed to receive GitHub notifications.",
+              });
+              issue = created.data;
+            } else if (issue.state === "closed") {
+              const reopened = await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issue.number,
+                state: "open",
+              });
+              issue = reopened.data;
+            }
+
+            const succeeded = process.env.SYNC_RESULT === "success";
+            const oldTip = process.env.OLD_TIP || "unavailable";
+            const upstreamTip = process.env.UPSTREAM_TIP || "unavailable";
+            const newTip = process.env.NEW_TIP || "unavailable";
+            const backupTag = process.env.BACKUP_TAG || "not created";
+
+            const body = succeeded
+              ? [
+                  "[SUCCESS] @rapmarz16 **Sunnypilot `release-mici` sync succeeded.**",
+                  "",
+                  `- Previous installer tip: \`${oldTip}\``,
+                  `- New upstream base: \`${upstreamTip}\``,
+                  `- New installer tip: \`${newTip}\``,
+                  `- Recovery tag: \`${backupTag}\``,
+                  "- Hyundai parameter and compiled CAN-FD Panda safety tests passed.",
+                  `- [View workflow run](${runUrl})`,
+                ].join("\n")
+              : [
+                  "[FAILURE] @rapmarz16 **Sunnypilot `release-mici` sync failed.**",
+                  "",
+                  "The installer branch was not updated. Review the conflict, dependency, or test failure before changing the vehicle branch.",
+                  "",
+                  `- Current installer tip: \`${oldTip}\``,
+                  `- Detected upstream base: \`${upstreamTip}\``,
+                  `- [View failed workflow run](${runUrl})`,
+                ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body,
+            });
