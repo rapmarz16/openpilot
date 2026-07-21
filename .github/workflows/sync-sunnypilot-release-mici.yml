@@ -130,6 +130,45 @@ jobs:
           python -m pytest -o addopts='' --confcutdir=. \
             opendbc/safety/tests/test_hyundai_canfd.py -q
 
+      - name: Install the Panda cross-compiler
+        if: steps.detect.outputs.updated == 'true'
+        working-directory: panda
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./setup.sh
+
+      - name: Rebuild the Comma Four Panda firmware
+        if: steps.detect.outputs.updated == 'true'
+        working-directory: panda
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+          export PYTHONPATH="${GITHUB_WORKSPACE}/opendbc_repo:${GITHUB_WORKSPACE}"
+          python -c 'import opendbc, os; expected = os.path.join(os.environ["GITHUB_WORKSPACE"], "opendbc_repo"); assert opendbc.INCLUDE_PATH.startswith(expected)'
+          grep -q 'hyundai_canfd_lka_steer_msg_alt_buttons_rx_checks' \
+            "${GITHUB_WORKSPACE}/opendbc_repo/opendbc/safety/modes/hyundai_canfd.h"
+          scons -j2 board/obj/panda_h7.bin.signed
+          test -s board/obj/panda_h7.bin.signed
+          sha256sum board/obj/panda_h7.bin.signed
+
+      - name: Commit the matching prebuilt Panda firmware
+        if: steps.detect.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- \
+            panda/board/obj/panda_h7.bin.signed \
+            panda/board/obj/panda_h7/main.bin \
+            panda/board/obj/panda_h7/main.elf \
+            panda/board/obj/gitversion.h \
+            panda/board/obj/version \
+            panda/board/obj/cert.h
+          if ! git diff --cached --quiet; then
+            git commit -m "Rebuild Panda firmware for Carnival safety"
+          fi
+
       - name: Back up and update the installer branch
         id: push
         if: steps.detect.outputs.updated == 'true'
@@ -231,6 +270,7 @@ jobs:
                   `- New installer tip: \`${newTip}\``,
                   `- Recovery tag: \`${backupTag}\``,
                   "- Hyundai parameter and compiled CAN-FD Panda safety tests passed.",
+                  "- The prebuilt Comma Four Panda firmware was rebuilt from the reviewed Carnival safety source.",
                   `- [View workflow run](${runUrl})`,
                 ].join("\n")
               : [
